@@ -128,8 +128,15 @@ func (h *UploadHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	defer part.Close()
 
 	// storing plaintext would break the zero server knowledge guarantee, so it is
-	// refused here rather than merely avoided by the official client
-	if fields["encrypted"] != "true" {
+	// refused here rather than merely avoided by the official client.
+	// only the opening part carries the flag; later parts of a chunked upload are
+	// checked against the session that the first part already created.
+	if fields["upload_id"] == "" {
+		if fields["encrypted"] != "true" {
+			http.Error(w, "encryption is required", http.StatusBadRequest)
+			return
+		}
+	} else if session, err := h.store.LoadSession(fields["upload_id"]); err != nil || !session.Encrypted {
 		http.Error(w, "encryption is required", http.StatusBadRequest)
 		return
 	}

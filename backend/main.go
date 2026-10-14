@@ -27,7 +27,10 @@ func main() {
 	os.MkdirAll(uploadDir, 0755)
 
 	maxStorage := envInt64("MAX_STORAGE_BYTES", 200*1024*1024*1024)
-	maxFile := envInt64("MAX_UPLOAD_BYTES", 2*1024*1024*1024)
+	// the frontend caps plaintext at 2 GiB but this limit applies to the
+	// ciphertext, which is always larger, so leave room for the per chunk auth
+	// tag and header or the top few KB of the range fail with a 413
+	maxFile := envInt64("MAX_UPLOAD_BYTES", 2*1024*1024*1024+16*1024*1024)
 	maxChunk := envInt64("MAX_CHUNK_BYTES", 90*1024*1024)
 	quotaBytes := envInt64("UPLOAD_QUOTA_BYTES", 4*1024*1024*1024)
 	maxConcurrent := int(envInt64("MAX_CONCURRENT_UPLOADS", 4))

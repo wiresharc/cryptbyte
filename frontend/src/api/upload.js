@@ -332,9 +332,11 @@ export async function uploadBlob(blob, opts) {
     formData.append('total_parts', String(planData.totalParts))
     formData.append('total_size', String(planData.totalSize))
     if (uploadId) formData.append('upload_id', uploadId)
+    // sent on every part, not just the first: a strict server rejects the whole
+    // upload if any part looks like it could be storing plaintext
+    formData.append('encrypted', encrypted ? 'true' : 'false')
     if (isFirstPart) {
       formData.append('downloads', downloads)
-      formData.append('encrypted', encrypted ? 'true' : 'false')
       formData.append('captcha_token', captchaToken || '')
       formData.append('website', honeypot || '')
       formData.append('expires_in', String(expiresIn || 0))
