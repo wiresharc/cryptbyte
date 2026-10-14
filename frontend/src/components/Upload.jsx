@@ -265,9 +265,25 @@ export default function Upload() {
     setUploading(false)
   }
 
-  const copyToClipboard = (text) => {
+  const [copied, setCopied] = useState(null)
+  const copyTimer = useRef(null)
+
+  const copyToClipboard = (key, text) => {
     navigator.clipboard.writeText(text)
+    setCopied(key)
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(null), 7000)
   }
+
+  useEffect(() => () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+  }, [])
+
+  const copyBtnClass = (key) => `shrink-0 px-3 py-1.5 rounded-lg text-sm transition-colors
+           inline-flex items-center gap-1.5 min-w-[5.5rem] justify-center
+           ${copied === key
+             ? 'bg-green-500/15 text-green-400'
+             : 'bg-surface-600 hover:bg-surface-500 text-white'}`
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-4">
@@ -638,10 +654,20 @@ export default function Upload() {
                   {result.url}
                 </code>
                 <button
-                  onClick={() => copyToClipboard(result.url)}
-                  className="shrink-0 px-3 py-1.5 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm transition-colors"
-                >
-                  copy
+                  onClick={() => copyToClipboard('url', result.url)}
+                  aria-label={copied === 'url' ? 'copied' : 'copy'}
+                  className={copyBtnClass('url')}
+                  >
+                  {copied === 'url' ? (
+                    <>
+                      copied
+                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </>
+                  ) : (
+                    'copy'
+                  )}
                 </button>
               </div>
             </div>
@@ -653,10 +679,20 @@ export default function Upload() {
                   {result.token}
                 </code>
                 <button
-                  onClick={() => copyToClipboard(result.token)}
-                  className="shrink-0 px-3 py-1.5 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm transition-colors"
-                >
-                  copy
+                  onClick={() => copyToClipboard('token', result.token)}
+                  aria-label={copied === 'token' ? 'copied' : 'copy'}
+                  className={copyBtnClass('token')}
+                  >
+                  {copied === 'token' ? (
+                    <>
+                      copied
+                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </>
+                  ) : (
+                    'copy'
+                  )}
                 </button>
               </div>
             </div>
@@ -669,10 +705,20 @@ export default function Upload() {
                     {result.key}
                   </code>
                   <button
-                    onClick={() => copyToClipboard(result.key)}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-surface-600 hover:bg-surface-500 text-sm transition-colors"
-                  >
-                    copy
+                    onClick={() => copyToClipboard('key', result.key)}
+                    aria-label={copied === 'key' ? 'copied' : 'copy'}
+                    className={copyBtnClass('key')}
+                    >
+                    {copied === 'key' ? (
+                    <>
+                      copied
+                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                      </>
+                    ) : (
+                      'copy'
+                    )}
                   </button>
                 </div>
               </div>

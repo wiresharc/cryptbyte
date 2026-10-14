@@ -516,7 +516,7 @@ function safeName(name, fallback) {
             </button>
 
             <button
-              onClick={() => { previewHook.openSingle(); setPreviewOpen(true) }}
+              onClick={() => { previewHook.requestSingle(); setPreviewOpen(true) }}
               disabled={downloading}
               className="mt-2 w-full py-2 rounded-xl bg-surface-700/40 hover:bg-surface-700
                          border border-white/5 text-sm text-gray-400 transition-colors
@@ -554,7 +554,7 @@ function safeName(name, fallback) {
                         <span className="text-xs text-gray-500">{formatSize(entry.s)}</span>
                       </button>
                       <button
-                        onClick={() => { previewHook.openEntry(entry, bundle.data); setPreviewOpen(true) }}
+                        onClick={() => { previewHook.requestEntry(entry, bundle.data); setPreviewOpen(true) }}
                         aria-label={`preview ${entry.n}`}
                         className="mt-1 w-full py-1 rounded-lg bg-surface-700/20 border border-white/5
                                    hover:bg-surface-700/60 text-xs text-gray-500 transition-colors"

@@ -3,8 +3,28 @@ import { importKey } from '../crypto/encryption'
 import { sniff, openEncryptedStream, concat } from '../crypto/streaming'
 import { decompressBlob } from '../crypto/compress'
 
-export const PREVIEW_BYTE_LIMIT = 100 * 1024 * 1024
+// rendering is the dangerous part, not downloading: a decoded bitmap runs several
+// times larger than its jpeg and a pdf viewer lays out every page up front, so the
+// caps are per kind rather than one flat ceiling
 export const PREVIEW_TEXT_LIMIT = 5 * 1024 * 1024
+export const PREVIEW_IMAGE_LIMIT = 20 * 1024 * 1024
+export const PREVIEW_PDF_LIMIT = 25 * 1024 * 1024
+export const PREVIEW_MEDIA_LIMIT = 25 * 1024 * 1024
+export const PREVIEW_BYTE_LIMIT = 25 * 1024 * 1024
+
+const LIMIT_FOR = {
+  text: PREVIEW_TEXT_LIMIT,
+  image: PREVIEW_IMAGE_LIMIT,
+  pdf: PREVIEW_PDF_LIMIT,
+  audio: PREVIEW_MEDIA_LIMIT,
+  video: PREVIEW_MEDIA_LIMIT,
+  blocked: 0,
+  binary: 0,
+}
+
+export function limitFor(kind) {
+  return LIMIT_FOR[kind] ?? PREVIEW_BYTE_LIMIT
+}
 
 const TEXT_TYPES = /^text\/|json|javascript|xml|yaml|x-sh|x-httpd|csv|markdown|sql|toml|ini|rtf/
 const IMAGE_TYPES = /^image\/(png|jpeg|jpg|gif|webp|bmp|x-icon|avif)/
@@ -31,6 +51,7 @@ export default function usePreview({ token, apiUrl, encryptionKey, fallbackName,
   const [preview, setPreview] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [target, setTarget] = useState(null)
   const abortRef = useRef(null)
   const urlRef = useRef(null)
 
@@ -47,6 +68,7 @@ export default function usePreview({ token, apiUrl, encryptionKey, fallbackName,
     setPreview(null)
     setLoading(false)
     setError(null)
+    setTarget(null)
   }, [releaseUrl])
 
   useEffect(() => () => {
@@ -76,7 +98,15 @@ export default function usePreview({ token, apiUrl, encryptionKey, fallbackName,
       let mime = fallbackMime || ''
 
       if (!encryptionKey) {
-        if (contentLength > PREVIEW_BYTE_LIMIT) {
+        const kind = classify(name, mime)
+        if (limitFor(kind) === 0) {
+          setError(kind === 'blocked'
+            ? 'this file type cannot be previewed safely'
+            : 'no preview for this file type')
+          setLoading(false)
+          return
+        }
+        if (contentLength && contentLength > limitFor(kind)) {
           setError('too large to preview')
           setLoading(false)
           return
@@ -93,12 +123,30 @@ export default function usePreview({ token, apiUrl, encryptionKey, fallbackName,
 
       // decrypt into a single preallocated buffer instead of collecting chunks and
       // concatenating, which would briefly hold two full copies of the plaintext
-      let target = probe.header.compressed
-        ? Math.min(contentLength || PREVIEW_BYTE_LIMIT, PREVIEW_BYTE_LIMIT * 4)
-        : (contentLength || PREVIEW_BYTE_LIMIT)
+      const kind = classify(name, mime)
+      const kindLimit = limitFor(kind)
 
-      const isText = classify(name, mime) === 'text'
-      const cap = isText ? Math.min(target, PREVIEW_TEXT_LIMIT) : target
+      if (kindLimit === 0) {
+        setError(kind === 'blocked'
+          ? 'this file type cannot be previewed safely'
+          : 'no preview for this file type')
+        setLoading(false)
+        return
+      }
+
+      // a known ciphertext length above the cap means the plaintext is far past it
+      // too, so bail before pulling hundreds of megabytes over the wire
+      if (contentLength && contentLength > kindLimit && !probe.header.compressed) {
+        setError('too large to preview')
+        setLoading(false)
+        return
+      }
+
+      let target = probe.header.compressed
+        ? Math.min(contentLength || kindLimit * 4, kindLimit * 4)
+        : (contentLength || kindLimit)
+
+      const cap = Math.min(target, kindLimit)
       const buf = new Uint8Array(Math.max(cap, 1))
       let offset = 0
       let full = true
@@ -202,7 +250,22 @@ export default function usePreview({ token, apiUrl, encryptionKey, fallbackName,
     })
   }, [releaseUrl])
 
-  return { preview, loading, error, openSingle, openEntry, clear }
+  // nothing is fetched or decrypted until the user explicitly asks for it
+  const activate = useCallback(() => {
+    const t = target
+    if (!t) return
+    if (t.kind === 'entry') openEntry(t.entry, t.data)
+    else openSingle()
+  }, [target, openEntry, openSingle])
+
+  const requestSingle = useCallback(() => setTarget({ kind: 'single' }), [])
+  const requestEntry = useCallback((entry, data) => setTarget({ kind: 'entry', entry, data }), [])
+
+  return {
+    preview, loading, error, clear, activate,
+    ready: Boolean(target),
+    requestSingle, requestEntry,
+  }
 }
 
 function guessMime(name) {
