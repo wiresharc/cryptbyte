@@ -8,6 +8,10 @@ import { decompressBlob } from '../crypto/compress'
 import { formatBytes, formatCountdown, formatSpeed, formatEta } from '../lib/format'
 import usePreview from './usePreview'
 import PreviewPanel from './PreviewPanel'
+import {
+  canPickFolder, canShareFiles, bundleMediaKind,
+  shareBundle, zipBundle, saveToFolder,
+} from '../lib/bundleExport'
 
 const INLINE_LIMIT = 64 * 1024 * 1024
 
@@ -340,33 +344,45 @@ function safeName(name, fallback) {
 
   // chromium can write the whole tree into one directory pick, everywhere else
   // falls back to saving each entry in turn
+  // one file per platform: a folder pick where the api exists, the share sheet on
+  // phones, and a single zip everywhere else. browsers block multiple automatic
+  // downloads, so the old per entry loop only ever saved one file.
   const saveAllEntries = async () => {
     if (!bundle || savingAll) return
     setSavingAll(true)
     setSavedAll(false)
+    setError(null)
 
     try {
-      if (typeof window.showDirectoryPicker === 'function') {
-        const dir = await window.showDirectoryPicker({ mode: 'readwrite' })
-        for (const entry of bundle.entries) {
-          const name = entry.n.split('/').pop() || 'file'
-          const handle = await dir.getFileHandle(name, { create: true })
-          const writable = await handle.createWritable()
-          await writable.write(bundle.data.subarray(entry.o, entry.o + entry.s))
-          await writable.close()
-        }
+      if (canPickFolder()) {
+        await saveToFolder(bundle.entries, bundle.data)
+      } else if (canShareFiles()) {
+        await shareBundle(bundle.entries, bundle.data)
       } else {
-        for (const entry of bundle.entries) {
-          await saveBundleEntry(entry)
-        }
+        const zip = await zipBundle(bundle.entries, bundle.data, 'bundle.zip')
+        downloadBlob([zip], 'bundle.zip', 'application/zip')
       }
       setSavedAll(true)
     } catch (err) {
-      if (!err || err.name !== 'AbortError') setError(err.message || 'could not save the files')
+      if (!err || err.name !== 'AbortError') {
+        setError(err.message || 'could not save the files')
+      }
     } finally {
       setSavingAll(false)
     }
   }
+
+  // the share sheet only offers targets that accept every file, so a bundle with
+  // a pdf in it will not show the photo gallery and must not claim to
+  const saveAllLabel = (() => {
+    if (!bundle) return 'download all files'
+    if (canPickFolder()) return 'save all to a folder'
+    if (canShareFiles()) {
+      const kind = bundleMediaKind(bundle.entries)
+      return kind === 'images' || kind === 'videos' ? 'send to photos' : 'save or send all'
+    }
+    return 'download all as zip'
+  })()
 
   const formatSize = (bytes) => {
     if (!bytes) return 'unknown'
@@ -537,7 +553,7 @@ function safeName(name, fallback) {
                     className="px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-xs
                                transition-colors disabled:opacity-50"
                   >
-                    {savingAll ? 'saving...' : 'download all files'}
+                    {savingAll ? 'saving...' : saveAllLabel}
                   </button>
                 </div>
                 {savedAll && (
