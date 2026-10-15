@@ -26,7 +26,10 @@ export function limitFor(kind) {
   return LIMIT_FOR[kind] ?? PREVIEW_BYTE_LIMIT
 }
 
-const TEXT_TYPES = /^text\/|json|javascript|xml|yaml|x-sh|x-httpd|csv|markdown|sql|toml|ini|rtf/
+const TEXT_TYPES = /^text\/|json|javascript|xml|yaml|x-sh|x-httpd|csv|markdown|sql|toml|ini|rtf|javascript|ecmascript|x-python|x-c|x-go|x-rust|x-php|x-ruby|x-perl|x-shellscript/
+// browsers report application/octet-stream for plenty of plain text files
+// (.ts, .json, .log and so on), so the extension has to be able to vouch for it
+const TEXT_EXT = /\.(txt|text|log|md|markdown|csv|json|jsonl|xml|ya?ml|toml|ini|cfg|conf|env|ts|tsx|js|jsx|mjs|cjs|c|h|cc|cpp|hpp|cs|go|rs|rb|py|php|java|kt|swift|scala|sh|bash|zsh|fish|sql|graphql|vue|svelte|astro|dockerfile|gitignore|properties|lock|diff|patch)$/i
 const IMAGE_TYPES = /^image\/(png|jpeg|jpg|gif|webp|bmp|x-icon|avif)/
 const AUDIO_TYPES = /^audio\//
 const VIDEO_TYPES = /^video\//
@@ -43,7 +46,7 @@ export function classify(name, type) {
   if (AUDIO_TYPES.test(mime)) return 'audio'
   if (VIDEO_TYPES.test(mime)) return 'video'
   if (mime === 'application/pdf' || /\.pdf$/i.test(name || '')) return 'pdf'
-  if (TEXT_TYPES.test(mime)) return 'text'
+  if (TEXT_TYPES.test(mime) || TEXT_EXT.test(name || '')) return 'text'
   return 'binary'
 }
 

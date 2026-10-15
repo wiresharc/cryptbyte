@@ -1,28 +1,35 @@
-// Bulk export for a decrypted bundle.
+// Bundle export.
 //
-// Three problems this has to solve at once:
-//  1. browsers block multiple automatic downloads, so N anchor clicks turn into
-//     one file. phones block them even harder.
-//  2. building a Blob per entry copies, so 47 entries would double the memory
-//     already held by a decrypted bundle. on a phone that is an oom.
-//  3. entry names come from the sender, so an untrusted bundle can carry
-//     traversal sequences that some extractors will happily write to disk.
+// A bundle is always handed over as a single archive. Browsers block multiple
+// automatic downloads, so N separate files means one file on most devices, and
+// the only portable way out is one archive the recipient extracts themselves.
+//
+// Entries are STORED rather than deflated: the payloads were already compressed
+// when the sender chose compression, so deflating again only burns battery for
+// nothing. That also means the archive can never expand on extraction, since its
+// ratio is always about 1:1.
 
-const SCRATCH = 'cryptbyte-export'
-
-export function canPickFolder() {
-  return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
+const MIME = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png',
+  gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', tif: 'image/tiff',
+  tiff: 'image/tiff', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav',
+  ogg: 'audio/ogg', flac: 'audio/flac', pdf: 'application/pdf',
+  txt: 'text/plain', log: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+  json: 'application/json', xml: 'application/xml', html: 'text/html',
+  js: 'text/javascript', mjs: 'text/javascript', ts: 'text/javascript',
+  jsx: 'text/javascript', tsx: 'text/javascript', css: 'text/css',
+  yaml: 'text/yaml', yml: 'text/yaml', py: 'text/x-python', sh: 'text/x-sh',
 }
 
-export function canShareFiles() {
-  return (
-    typeof navigator !== 'undefined' &&
-    typeof navigator.canShare === 'function' &&
-    typeof navigator.share === 'function'
-  )
+export function mimeFor(name) {
+  const ext = String(name || '').split('.').pop().toLowerCase()
+  return MIME[ext] || 'application/octet-stream'
 }
 
-// strips anything that could escape the extraction directory
+// entry names come from the sender, so an untrusted bundle can carry traversal
+// sequences that some extractors will happily write to disk
 export function safePath(name, index) {
   const parts = String(name || '')
     .replace(/\\/g, '/')
@@ -35,117 +42,16 @@ export function safePath(name, index) {
   return clean.length > 180 ? clean.slice(-180) : clean
 }
 
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/i
-const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i
-
-// the share sheet only offers targets that accept every file in the set, so a
-// bundle containing a pdf will silently lose the photo gallery as an option
-export function bundleMediaKind(entries) {
-  if (!entries.length) return 'empty'
-  let images = 0
-  let videos = 0
-  for (const e of entries) {
-    if (IMAGE_EXT.test(e.n)) images++
-    else if (VIDEO_EXT.test(e.n)) videos++
-    else return 'mixed'
-  }
-  if (images && !videos) return 'images'
-  if (videos && !images) return 'videos'
-  return 'mixed'
-}
-
-function opfsRoot() {
-  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return null
-  return navigator.storage.getDirectory()
-}
-
-async function withScratchDir(fn) {
-  const root = await opfsRoot()
-  if (!root) return fn(null)
-
-  let dir = null
-  try {
-    dir = await root.getDirectoryHandle(SCRATCH, { create: true })
-  } catch {
-    return fn(null)
-  }
-  try {
-    return await fn(dir)
-  } finally {
-    try {
-      await root.removeEntry(SCRATCH, { recursive: true })
-    } catch {}
-  }
-}
-
-// writes each entry to disk so the share sheet gets disk backed File objects and
-// nothing is copied out of the already decrypted bundle
-async function stage(entries, data, dir, onProgress) {
-  const files = []
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]
-    const path = safePath(entry.n, i)
-    const name = path.split('/').pop()
-    const bytes = data.subarray(entry.o, entry.o + entry.s)
-
-    if (dir) {
-      try {
-        const fh = await dir.getFileHandle(name, { create: true })
-        const w = await fh.createWritable()
-        await w.write(bytes)
-        await w.close()
-        files.push({ path, file: new File([await fh.getFile()], name) })
-        onProgress?.(i + 1, entries.length)
-        continue
-      } catch {
-        // fall through for this entry
-      }
-    }
-    files.push({ path, file: new File([bytes], name) })
-    onProgress?.(i + 1, entries.length)
-  }
-  return files
-}
-
-export async function shareBundle(entries, data, onProgress) {
-  if (!canShareFiles()) throw new Error('sharing is not supported in this browser')
-
-  return withScratchDir(async (dir) => {
-    const files = await stage(entries, data, dir, onProgress)
-    if (!navigator.canShare({ files })) {
-      throw new Error('too many files to send at once')
-    }
-    await navigator.share({ files })
-  })
-}
-
-// stored entries, not deflate: these files were already compressed when the
-// sender chose compression, so deflating again only burns battery for nothing.
-// reads straight from the decrypted bundle so nothing is duplicated on the way.
-export async function zipBundle(entries, data, zipName) {
+// reads straight out of the decrypted bundle so nothing is duplicated on the way
+export async function zipBundle(entries, data, zipName = 'bundle.zip') {
   const { zipSync } = await import('fflate')
 
   const files = {}
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]
-    const path = safePath(entry.n, i)
-    // a later entry could collide with an earlier one after sanitising
-    files[path] = data.subarray(entry.o, entry.o + entry.s)
+    // a later entry could collide with an earlier one once sanitised
+    files[safePath(entry.n, i)] = data.subarray(entry.o, entry.o + entry.s)
   }
 
-  const archive = zipSync(files, { level: 0 })
-  return new File([archive], zipName, { type: 'application/zip' })
-}
-
-export async function saveToFolder(entries, data, onProgress) {
-  const dir = await window.showDirectoryPicker({ mode: 'readwrite' })
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i]
-    const name = safePath(entry.n, i).split('/').pop()
-    const handle = await dir.getFileHandle(name, { create: true })
-    const writable = await handle.createWritable()
-    await writable.write(data.subarray(entry.o, entry.o + entry.s))
-    await writable.close()
-    onProgress?.(i + 1, entries.length)
-  }
+  return new File([zipSync(files, { level: 0 })], zipName, { type: 'application/zip' })
 }

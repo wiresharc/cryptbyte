@@ -269,8 +269,13 @@ export default function Upload() {
   const copyTimer = useRef(null)
 
   const copyToClipboard = (key, text) => {
-    navigator.clipboard.writeText(text)
-    setCopied(key)
+    // a denied clipboard permission must not surface as an unhandled rejection,
+    // and we should not claim "copied" when nothing was written
+    navigator.clipboard.writeText(text).then(
+      () => { setCopied(key) },
+      () => { setError('copy failed, select the text and copy manually') },
+    )
+    return
     if (copyTimer.current) clearTimeout(copyTimer.current)
     copyTimer.current = setTimeout(() => setCopied(null), 7000)
   }

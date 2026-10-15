@@ -1,4 +1,5 @@
 const MANIFEST_MAGIC = 'CBUNDLE1'
+const MAX_BUNDLE_ENTRIES = 10000
 
 function encodeBundle(files) {
   const entries = []
@@ -37,6 +38,10 @@ function decodeBundleHeader(bytes) {
   try {
     const entries = JSON.parse(new TextDecoder().decode(bytes.subarray(start, start + len)))
     if (!Array.isArray(entries) || entries.length === 0) return null
+    // the manifest comes from whoever uploaded the bundle, so a hostile sender
+    // could declare millions of entries and make every recipient loop forever when
+    // they try to save or zip the bundle
+    if (entries.length > MAX_BUNDLE_ENTRIES) return null
     return { entries, consumed: start + len }
   } catch {
     return null
