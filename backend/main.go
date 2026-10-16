@@ -34,8 +34,10 @@ func main() {
 	maxChunk := envInt64("MAX_CHUNK_BYTES", 90*1024*1024)
 	quotaBytes := envInt64("UPLOAD_QUOTA_BYTES", 4*1024*1024*1024)
 	maxConcurrent := int(envInt64("MAX_CONCURRENT_UPLOADS", 4))
-	readTimeout := time.Duration(envInt64("UPLOAD_READ_TIMEOUT_SECONDS", 1800)) * time.Second
-	writeTimeout := time.Duration(envInt64("UPLOAD_WRITE_TIMEOUT_SECONDS", 1800)) * time.Second
+	// a part is at most 88 MiB, so anything past this is a dead connection rather
+	// than a slow one. the client also gives up on its own after 90s of silence
+	readTimeout := time.Duration(envInt64("UPLOAD_READ_TIMEOUT_SECONDS", 600)) * time.Second
+	writeTimeout := time.Duration(envInt64("UPLOAD_WRITE_TIMEOUT_SECONDS", 600)) * time.Second
 
 	store := storage.NewStore(uploadDir, maxStorage)
 

@@ -840,7 +840,9 @@ function UploadProgress({ stats }) {
         <span className="text-gray-400">
           {compressing
             ? 'compressing'
-            : `uploading chunk ${stats.chunkIndex + 1} of ${stats.totalParts}`}
+            : stats.awaiting
+              ? `chunk ${stats.chunkIndex + 1} sent - waiting for server`
+              : `uploading chunk ${stats.chunkIndex + 1} of ${stats.totalParts}`}
         </span>
         <span className="text-red-400">{percent}%</span>
       </div>

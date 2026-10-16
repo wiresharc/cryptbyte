@@ -11,7 +11,7 @@ import {
 } from '../crypto/encryption.js'
 
 const RESUME_KEY = 'cryptbyte.pending'
-const MAX_ATTEMPTS = 3
+const MAX_ATTEMPTS = 5
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -23,7 +23,10 @@ function abortError() {
   return err
 }
 
-async function sendPart(url, formData, onProgress, signal) {
+// how long a part may go with zero bytes moving before we call it dead and retry
+const STALL_TIMEOUT_MS = 90 * 1000
+
+async function sendPart(url, formData, onProgress, signal, onAwaiting) {
   const xhr = new XMLHttpRequest()
 
   if (signal) {
@@ -31,12 +34,30 @@ async function sendPart(url, formData, onProgress, signal) {
     signal.addEventListener('abort', () => xhr.abort(), { once: true })
   }
 
+  let lastMove = Date.now()
+  let awaiting = false
+
   xhr.upload.addEventListener('progress', (e) => {
+    lastMove = Date.now()
+    if (awaiting) { awaiting = false; onAwaiting?.(false) }
     if (e.lengthComputable && onProgress) onProgress(e.loaded)
   })
 
+  // the bytes are all sent but the server has not answered yet. without saying
+  // so, a slow connection looks exactly like a hang
+  const poll = setInterval(() => {
+    if (Date.now() - lastMove > 1500 && !awaiting && xhr.readyState !== 2 && xhr.readyState !== 3) {
+      awaiting = true
+      onAwaiting?.(true)
+    }
+    if (Date.now() - lastMove > STALL_TIMEOUT_MS) {
+      xhr.abort()
+    }
+  }, 1000)
+
   return new Promise((resolve, reject) => {
     xhr.addEventListener('load', () => {
+      clearInterval(poll)
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText))
@@ -47,23 +68,32 @@ async function sendPart(url, formData, onProgress, signal) {
         reject(new Error(xhr.responseText || `upload failed (${xhr.status})`))
       }
     })
-    xhr.addEventListener('error', () => reject(new Error('network error')))
-    xhr.addEventListener('abort', () => reject(abortError()))
+    xhr.addEventListener('error', () => { clearInterval(poll); reject(new Error('network error')) })
+    xhr.addEventListener('abort', () => {
+      clearInterval(poll)
+      if (Date.now() - lastMove > STALL_TIMEOUT_MS) {
+        const err = new Error('connection stalled, retrying')
+        err.retryable = true
+        reject(err)
+        return
+      }
+      reject(abortError())
+    })
     xhr.open('POST', url)
     xhr.send(formData)
   })
 }
 
-async function sendWithRetry(url, build, onProgress, signal) {
+async function sendWithRetry(url, build, onProgress, signal, onAwaiting) {
   let lastErr
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw abortError()
     try {
-      return await sendPart(url, build(), onProgress, signal)
+      return await sendPart(url, build(), onProgress, signal, onAwaiting)
     } catch (err) {
       if (err && err.name === 'AbortError') throw err
       lastErr = err
-      if (attempt < MAX_ATTEMPTS) await sleep(400 * attempt * attempt)
+      if (attempt < MAX_ATTEMPTS) await sleep(Math.min(8000, 500 * 2 ** (attempt - 1)))
     }
   }
   throw lastErr
@@ -262,7 +292,7 @@ export async function uploadBlob(blob, opts) {
   let lastBytes = carriedBytes
 
 
-  function report(index, withinPart, partBytes) {
+  function report(index, withinPart, partBytes, awaiting = false) {
     const now = Date.now()
     const done = uploaded
 
@@ -280,6 +310,7 @@ export async function uploadBlob(blob, opts) {
       totalParts: planData.totalParts,
       chunkLoaded: withinPart,
       chunkTotal: partBytes,
+      awaiting,
       rate,
       elapsedMs: now - startedAt,
       etaMs: rate > 0 ? ((planData.totalSize - done) / rate) * 1000 : null,
@@ -352,7 +383,8 @@ export async function uploadBlob(blob, opts) {
       url,
       () => formData,
       (within) => report(part.index, within, slice.length),
-      signal
+      signal,
+      (waiting) => report(part.index, slice.length, slice.length, waiting)
     )
 
     uploaded = base + slice.length
